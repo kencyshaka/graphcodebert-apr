@@ -41,7 +41,7 @@ from tree_sitter import Language, Parser
 logger = logging.getLogger(__name__)
 
 dfg_function = {
-    'c-sharp': DFG_csharp,
+    'c': DFG_csharp,
     'python': DFG_python,
     'java': DFG_java,
     'ruby': DFG_ruby,
@@ -131,6 +131,9 @@ def read_examples(filename):
     """Read examples from filename."""
     examples = []
     source, target = filename.split(',')
+    print("the source file is *************",source)
+    print("the target file is *************",target)
+
     with open(source, encoding="utf-8") as f1, open(target, encoding="utf-8") as f2:
         for line1, line2 in zip(f1, f2):
             line1 = line1.strip()
@@ -246,5 +249,15 @@ def convert_examples_to_features(examples, tokenizer, args, filename, stage=None
                 target_mask,
             )
         )
-    logger.info("The number of input feaures saved are {}".format(len(features)))
+    
+    print("the feature is ",features)
+
+    if stage == "dev" or stage =="test":
+            features = examples,features
+
     saving_file_pkl(filename, features)
+    logger.info("The stage is {}".format(stage))
+    logger.info("The number of input feaures saved are {}".format(len(features)))
+    logger.info("The number of input feaures saved are {}".format(features[0][0]))
+    logger.info("The number of input feaures saved are {}".format(features[1][0]))
+    

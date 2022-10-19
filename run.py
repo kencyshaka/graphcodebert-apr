@@ -86,6 +86,8 @@ def main():
                         help="Whether to run training.")
     parser.add_argument("--do_train", action='store_true',
                         help="Whether to run training.")
+    parser.add_argument("--do_early_checkpoint", action='store_true',
+                        help="Whether to do an early checkpoint.")
     parser.add_argument("--do_best_bleu", action='store_true',
                         help="Whether to store the best model based on best bleu value")
     parser.add_argument("--do_best_loss", action='store_true',
@@ -137,6 +139,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.n_gpu = torch.cuda.device_count()
     args.device = device
+    print("*********************************")
+    print("the number of devices",args.n_gpu)
+    
 
     # Set seed
     set_seed(args.seed)
@@ -167,35 +172,57 @@ def main():
     #        model = torch.nn.DataParallel(model)
 
     if args.do_data_processing:
-        train_examples = retrieve_pkl_file(args.train_filename)
-        train_features = convert_examples_to_features(train_examples, tokenizer, args, args.train_filename,
-                                                      stage='train')
+        examples = read_examples(args.val_filename)
+        print("the example length",len(examples))
+        examples = random.sample(examples,min(1000,len(examples)))
+        stage='dev'
+        filename_dir = os.path.join(args.output_dir,stage)
+        print("filename is ",filename_dir)
+    
+        convert_examples_to_features(examples, tokenizer, args,filename_dir,stage=stage)
+        exit()
+    # Prepare training data loader
+    print("the training file is ",args.train_filename)
+    train_features = retrieve_pkl_file(args.train_filename)
+    val_features = retrieve_pkl_file(args.val_filename)
+    dev_features = retrieve_pkl_file(args.dev_filename)
+    test_features = retrieve_pkl_file(args.test_filename)
+    targets = dev_features[0], test_features[0]  
+    data_module = TextDatasetModule(train_features, val_features, dev_features[1], test_features[1], args)
+
+    best_ppl_checkpoint_dir = os.path.join(args.output_dir, 'checkpoint-best-ppl')
+    if not os.path.exists(best_ppl_checkpoint_dir):
+        os.makedirs(best_ppl_checkpoint_dir)
+
+    best_bleu_checkpoint_dir = os.path.join(args.output_dir, 'checkpoint-best-bleu')
+    if not os.path.exists(best_bleu_checkpoint_dir):
+            os.makedirs(best_bleu_checkpoint_dir)
+    
+    early_checkpoint_dir = os.path.join(args.output_dir, 'checkpoint-early-stop')
+    if not os.path.exists(early_checkpoint_dir):
+            os.makedirs(early_checkpoint_dir)
+
+    lastcheckpoint_dir = os.path.join(args.output_dir, 'checkpoint-last')
+    if not os.path.exists(lastcheckpoint_dir):
+            os.makedirs(lastcheckpoint_dir)
+
+    # make for wandb logs
+    save_dir = os.path.join(args.output_dir, 'lightning_logs')
+    if os.path.exists(save_dir) is False:
+            os.makedirs(save_dir)
+
+    wandb_logger = WandbLogger(save_dir=save_dir,
+                                   project="graphcodebert_experiment"
+                                   )
+    model = Seq2SeqPredictor(seq2seq_model, tokenizer, targets, args)
 
     if args.do_train:
-        # Prepare training data loader
-        train_features = retrieve_pkl_file(args.train_filename)
-        val_features = retrieve_pkl_file(args.val_filename)
-        dev_features = retrieve_pkl_file(args.dev_filename)
-        test_features = retrieve_pkl_file(args.test_filename)
-        targets = dev_features[0], test_features[0]
-
-        model = Seq2SeqPredictor(seq2seq_model, tokenizer, targets, args)  # lightning model
-
-        # train_fetaures,val_features = train_test_split(train_features, test_size=0.2, random_state=args.seed, shuffle=True)
-        data_module = TextDatasetModule(train_features[:8], val_features[:8], dev_features[:8], test_features[:8], args)
-
-        # for loss function
-        best_ppl_checkpoint_dir = os.path.join(args.output_dir, 'checkpoint-best-ppl')
-        if not os.path.exists(best_ppl_checkpoint_dir):
-            os.makedirs(best_ppl_checkpoint_dir)
-
-        best_bleu_checkpoint_dir = os.path.join(args.output_dir, 'checkpoint-best-bleu')
-        if not os.path.exists(best_bleu_checkpoint_dir):
-            os.makedirs(best_bleu_checkpoint_dir)
+        # Prepare model
+    #    model = Seq2SeqPredictor(seq2seq_model, tokenizer, targets, args)
 
         if args.do_best_bleu:
             dirpath_checkpoint = best_bleu_checkpoint_dir
-            metric_value = "avg_val_bleu"
+            metric_value = "avg_val_bleu-4"
             mode_value = "max"
 
         if args.do_best_loss:
@@ -205,57 +232,65 @@ def main():
 
         checkpoint_callback = ModelCheckpoint(
             dirpath=dirpath_checkpoint,
-            filename="pytorch_model.bin",
+            filename="pytorch_model",
             save_top_k=1,
             verbose=True,
             monitor=metric_value,
             mode=mode_value
         )
 
-        lastcheckpoint_dir = os.path.join(args.output_dir, 'checkpoint-last')
-        if not os.path.exists(lastcheckpoint_dir):
-            os.makedirs(lastcheckpoint_dir)
-
         early_stop_callback = EarlyStopping(
             monitor=metric_value,
             min_delta=0.00,
-            patience=2,
+            patience=3,
             verbose=True,
             mode=mode_value
         )
-        save_dir = os.path.join(args.output_dir, 'lightning_logs')
-
-        # make dir if save_dir not exist
-        if os.path.exists(save_dir) is False:
-            os.makedirs(save_dir)
-
-        wandb_logger = WandbLogger(save_dir=save_dir,
-                                   project="graphcodebert_experiment"
-                                   )
+        
+        if args.do_early_checkpoint:
+            call_backs = early_stop_callback
+        else:
+            call_backs = checkpoint_callback
 
         trainer = pl.Trainer(
             logger=wandb_logger,
-            callbacks=[checkpoint_callback],
-            # checkpoint_callback=checkpoint_callback,
+            callbacks=[call_backs],
             max_epochs=args.num_train_epochs,
-            gpus=args.n_gpu,
+            accelerator='gpu',
+            devices = args.n_gpu,
+            profiler ='simple'
+            #fast_dev_run = True
         )
-
+         
         # log gradients and model topology
         wandb_logger.watch(model)
 
-        trainer.fit(model, data_module)
+        trainer.fit(model,data_module)
+
+        #save the model if early stopping is selected
+        if args.do_early_checkpoint:
+            trainer.save_checkpoint(early_checkpoint_dir+"/early_stoping.ckpt")
+        else:
+            trainer.save_checkpoint(lastcheckpoint_dir+"/last_model.ckpt")
 
     if args.do_test:
-        trainer.test()
-        # my comment the following can be at the end of testing
+        
+        dirpath_checkpoint = early_checkpoint_dir+'/early_stoping.ckpt'
+        print("loading model for testing from",dirpath_checkpoint)
 
+        #model = Seq2SeqPredictor(seq2seq_model, tokenizer, targets, args)
+       # model = model.load_from_checkpoint(dirpath_checkpoint)
+        #model2 = seq2seq_model.load_state_dict(torch.load(dirpath_checkpoint)) 
+        trainer = pl.Trainer(
+            logger=wandb_logger,
+            accelerator='gpu',
+            devices = args.n_gpu,
+            profiler ='simple'
+            #fast_dev_run = True
+        )
 
-#            dev_bleu=round(_bleu(os.path.join(args.output_dir, "test_{}.gold".format(str(idx))).format(file),
-#                                 os.path.join(args.output_dir, "test_{}.output".format(str(idx))).format(file)),2)
-#            logger.info("  %s = %s "%("bleu-4",str(dev_bleu)))
-#            logger.info("  %s = %s "%("xMatch",str(round(np.mean(accs)*100,4))))
-#            logger.info("  "+"*"*20)
+        trainer.test(model,ckpt_path=dirpath_checkpoint, datamodule=data_module)
+        
 
 if __name__ == "__main__":
     main()

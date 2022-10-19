@@ -38,7 +38,7 @@ class TextInputFeaturesDataset(Dataset):
             for a in nodes:
                 if a + node_index < len(self.examples[item].position_idx):
                     attn_mask[idx + node_index, a + node_index] = True
-        print("size of the attn_mask", attn_mask.size)
+        #print("size of the attn_mask", attn_mask.size)
         return (torch.tensor(self.examples[item].source_ids),
                 torch.tensor(self.examples[item].source_mask),
                 torch.tensor(self.examples[item].position_idx),
@@ -57,9 +57,8 @@ class TextDatasetModule(pl.LightningDataModule):
         self.dev_dataset = None
         self.train = train
         self.val = val
-        self.dev = dev[1]
-        self.test = test[1]
-
+        self.dev = dev  
+        self.test = test
         self.train_batch_size = args.train_batch_size
         self.eval_batch_size = args.eval_batch_size
         self.args = args
@@ -76,7 +75,8 @@ class TextDatasetModule(pl.LightningDataModule):
             self.train_dataset,
             sampler=train_sampler,
             batch_size=self.train_batch_size // self.args.gradient_accumulation_steps,
-            num_workers=4
+            num_workers=10,
+            drop_last=True
         )
 
     def val_dataloader(self):
@@ -85,7 +85,8 @@ class TextDatasetModule(pl.LightningDataModule):
             self.val_dataset,
             sampler=eval_sampler_loss,
             batch_size=self.eval_batch_size,
-            num_workers=4
+            num_workers=10,
+            drop_last=True
         )
 
         eval_sampler_bleu = SequentialSampler(self.dev_dataset)
@@ -93,7 +94,8 @@ class TextDatasetModule(pl.LightningDataModule):
             self.dev_dataset,
             sampler=eval_sampler_bleu,
             batch_size=self.eval_batch_size,
-            num_workers=4
+            num_workers=10,
+            drop_last=True
         )
         loaders = {"loss": loader_a, "bleu": loader_b}
         combined_loaders = CombinedLoader(loaders, mode="max_size_cycle")
@@ -101,9 +103,11 @@ class TextDatasetModule(pl.LightningDataModule):
 
     def test_dataloader(self):
         test_sampler = SequentialSampler(self.test_dataset)
+        
         return DataLoader(
             self.test_dataset,
             batch_size=self.eval_batch_size,
             sampler=test_sampler,
-            num_workers=4
+            num_workers=10,
+            drop_last=True
         )

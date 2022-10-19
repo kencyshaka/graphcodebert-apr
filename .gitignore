@@ -8,8 +8,14 @@ data/
 deepfix/
 graphcodebert-base/
 lightnings_logs/
-
-
+parser/tree-sitter-c/
+parser/tree-sitter-go/
+parser/tree-sitter-java/
+parser/tree-sitter-javascript/
+parser/tree-sitter-php/
+parser/tree-sitter-python/
+parser/tree-sitter-ruby/
+slurm-*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

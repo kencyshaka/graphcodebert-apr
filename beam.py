@@ -6,7 +6,7 @@ import torch
 class Beam(object):
     def __init__(self, size, sos, eos):
         self.size = size
-        self.tt = torch
+        self.tt = torch.cuda
         # The score for each translation on the beam.
         self.scores = self.tt.FloatTensor(size).zero_()
         # The backpointers at each time-step.

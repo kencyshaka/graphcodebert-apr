@@ -63,9 +63,10 @@ class Seq2Seq(nn.Module):
     def forward(self, source_ids,source_mask,position_idx,attn_mask,target_ids=None,target_mask=None,args=None):   
         # embedding
         nodes_mask=position_idx.eq(0)
-        token_mask=position_idx.ge(2)        
+        token_mask=position_idx.ge(2)
+        #print("the length of position id is",position_idx[0])
         inputs_embeddings=self.encoder.embeddings.word_embeddings(source_ids)
-        attn_mask = attn_mask[:,:len(nodes_mask[1]),:len(nodes_mask[1])]
+        #attn_mask = attn_mask[:,:len(nodes_mask[1]),:len(nodes_mask[1])]
         nodes_to_token_mask=nodes_mask[:,:,None]&token_mask[:,None,:]&attn_mask
         nodes_to_token_mask=nodes_to_token_mask/(nodes_to_token_mask.sum(-1)+1e-10)[:,:,None]
         avg_embeddings=torch.einsum("abc,acd->abd",nodes_to_token_mask,inputs_embeddings)
@@ -94,7 +95,7 @@ class Seq2Seq(nn.Module):
         else:
             # Predict
             preds = []
-            zero = torch.LongTensor(1).fill_(0)
+            zero = torch.cuda.LongTensor(1).fill_(0)
             for i in range(source_ids.shape[0]):
                 context = encoder_output[:, i:i + 1]
                 context_mask = source_mask[i:i + 1, :]
@@ -137,6 +138,7 @@ class Seq2SeqPredictor(pl.LightningModule):
         self.eps = args.adam_epsilon
         self.args = args
         self.dev_examples_target, self.test_examples_target = targets
+        self.save_hyperparameters()
 
     def forward(self, x):
         # need to edit it and return accordingly
@@ -162,6 +164,7 @@ class Seq2SeqPredictor(pl.LightningModule):
 
         # for bleu prediction
         source_ids, source_mask, position_idx, att_mask, target_ids, target_mask = batch["bleu"]
+        #print("the batch is at index0",batch['bleu'][0])
         preds = self.model(source_ids, source_mask, position_idx, att_mask)
 
         self.log("val_loss", loss, prog_bar=True, logger=True, sync_dist=True)
@@ -210,24 +213,24 @@ class Seq2SeqPredictor(pl.LightningModule):
         examples = self.dev_examples_target
         p = []
         for pred in preds:
-            print("the prediction are:____________", pred)
+            #print("the prediction are:____________", pred)
             t = pred[0][0].cpu().numpy()
             t = list(t)
-            print("the t list is ***********************", t)
+            #print("the t list is ***********************", t)
             if 0 in t:
                 t = t[:t.index(0)]
             text = self.tokenizer.decode(t, clean_up_tokenization_spaces=False)
             p.append(text)
 
-        print("the the text list is ***********************", text)
+        #print("the the text list is ***********************", text)
         # calculate the bleu score
         predictions_list = []
         accs = []
         target_list = []
         # with open(os.path.join(self.args.output_dir, "dev.output"), 'w') as f, open(os.path.join(self.args.output_dir, "dev.gold"), 'w') as f1:
         for ref, gold in zip(p, examples):
-            print("ref is",ref.strip().split())
-            print("gold is",gold.target.strip().split())
+            #print("ref is",ref.strip().split())
+            #print("gold is",gold.target.strip().split())
             predictions_list.append(ref.strip().split())
             target_list.append(gold.target.strip().split())
             # f.write(ref + '\n')
@@ -244,37 +247,35 @@ class Seq2SeqPredictor(pl.LightningModule):
         self.log("avg_val_bleu-4", dev_bleu, logger=True)
         self.log("xMatch", round(np.mean(accs) * 100, 4), logger=True)
         self.log("avg_val_loss", avg_loss, logger=True)
-
         # calculate the accuracy score
 
     def test_epoch_end(self, test_step_outputs):  # the average pre@ k
         preds = torch.stack([x['preds'] for x in test_step_outputs])
-        examples = self.test_examples_target
+        examples = self.dev_examples_target
+        #print("the examples length",len(examples))
         p = []
         for pred in preds:
+        #    print("the prediction are:____________", pred)
             t = pred[0][0].cpu().numpy()
             t = list(t)
             if 0 in t:  # it was only t before
                 t = t[:t.index(0)]
-                text = self.tokenizer.decode(t, clean_up_tokenization_spaces=False)
-                p.append(text)
+            text = self.tokenizer.decode(t, clean_up_tokenization_spaces=False)
+            p.append(text)
 
         # calculate the bleu score
         predictions = []
         accs = []
-        with open(os.path.join(self.args.output_dir, "dev.output"), 'w') as f, open(
-                os.path.join(self.args.output_dir, "dev.gold"), 'w') as f1:
+        with open(os.path.join(self.args.output_dir, "test.output"), 'w') as f, open(os.path.join(self.args.output_dir, "test.gold"), 'w') as f1:
             for ref, gold in zip(p, examples):
                 predictions.append(ref)
                 f.write(ref + '\n')
                 f1.write(gold.target + '\n')
                 accs.append(ref == gold.target)
 
-        dev_bleu = round(
-            _bleu(os.path.join(self.args.output_dir, "dev.gold"), os.path.join(self.args.output_dir, "dev.output")), 2)
+        dev_bleu = round(_bleu(os.path.join(self.args.output_dir, "test.gold"), os.path.join(self.args.output_dir, "test.output")), 2)
         xmatch = round(np.mean(accs) * 100, 4)
         self.log("avg_test_bleu-4", dev_bleu, logger=True)
         self.log("xMatch", round(np.mean(accs) * 100, 4), logger=True)
-
-    # what about on_test_end
-
+       
+        # TODO implement the pred@K metric
